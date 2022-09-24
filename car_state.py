@@ -9,6 +9,8 @@ import cv2
 import math
 import numpy as np
 
+import image_utils as iu
+
 dx = 240
 dy = 270
 end_task_index = 15
@@ -18,97 +20,91 @@ right_border = 14*dx
 
 
 class car:
-    
+
     # self properties
     ip = "0.0.0.0"
     port = 8888
-    color_high = np.zeros(shape = (1,3))
-    color_low = np.zeros(shape = (1,3))
-    
+    color_high = np.zeros(shape=(1, 3))
+    color_low = np.zeros(shape=(1, 3))
+
+    l = 120
+    r = 30
+
     # motion properties
-    x = 0 # central points (x,y)
+    x = 0                       # central points (x,y)
     y = 0
-    v = 0 # Updated by left and right wheel speed
-    yaw = 0
-    
+    v = 0                       # Updated by left and right wheel speed
+    yaw = 0                     # angle of car
+
+    vc = 200                    # mm/s -- vp = vl = vr = 0.1
+
+    # kinematics
+    vl = 0
+    vr = 0
+
     # properties for drawing line and planning
-    central_point = []
-    forward = "left" # This forward is used for drawing line
-    front_middle_point = [] # Check the car border
-    back_middle_point = []
+    central_point = ()
+    forward = "go"              # go: x++ back: x--
+    ey = 0                      # distance point to line
+    ld = 0                      # distance to next point
+    e = 0
 
     # target_points
     traces = []
-    trace_forward = [] # left to right is forward
-    trace_backward = [] # right to left is backward    
-    dis_y = 0
-    
-    
-    def __init__(self, ip, port, color_low, color_high, traces):
+    previous_target = 0
+    next_target = 1
+
+    def __init__(self, ip, port, color_low, color_high, traces, vc=None):
         self.ip = ip
         self.port = port
         self.color_low = color_low
         self.color_high = color_high
         self.traces = traces
         print(traces)
-        self.trace_forward = traces[0]
-        self.trace_backward = traces[1]
-        self.task_trace = []
-        self.state = ""
         self.contours = 0
-        
+        if vc:
+            self.vc = vc
+
     def print_msg(self):
         print("My points:")
-        print(self.front_middle_point)
-        print(self.back_middle_point)
         print(self.central_point)
-        
-        
-    def calc_nearest_index(self):
-        
-        # calculate dx and dy of each point
-        d_f = [(self.x,self.y) - point for point in self.trace_forward]
-        d_b = [(self.x,self.y) - point for point in self.trace_backward]
-        
-        # calculate distance of each point
-        d_f = [abs(math.sqrt(idx ** 2 + idy ** 2)) for (idx, idy) in d_f]
-        d_b = [abs(math.sqrt(idx ** 2 + idy ** 2)) for (idx, idy) in d_b]
-        
-        mind_f = min(d_f)
-        mind_b = min(d_b)
-        
-        ind = d_f.index(mind_f) if mind_f < mind_b else d_b.index(mind_b)
-        self.forward = "left" if mind_f < mind_b else "right"
-        self.task_trace = self.trace_forward if mind_f < mind_b else self.trace_backward
-        if self.task_trace == self.trace_backward and ind == end_task_index:
-            self.roll_back()
-            
-        self.goal = self.task_trace[ind + 1]
-        return ind
-    
+
     def calc_y_dis(self):
-        y_line = self.traces[0][0][1] if self.forward == "left" else self.traces[1][0][1]
-        if self.forward == "left":
-            print("Current trace:",self.traces[0][0][1])
-        else:
-            print("Current trace:",self.traces[1][0][1])
-        print("Current y:",self.y)
-        print("Current dis:",y_line-self.y)
-        self.dis_y = y_line - self.y
-                     
-    def update_point(self,img):
-        
+        point1 = self.traces[self.previous_target]
+        point2 = self.traces[self.next_target]
+        if point1[0] == point2[0]:
+            return self.x - point1[0]
+        # y = (y2-y1)/(x2-x1)*(x-x1) + y1
+        A = (point2[1] - point1[1])/(point2[0] - point1[0])
+        B = -1
+        C = point1[0]**2*(point1[1]-point2[1])*(point2[0]-point1[0]) + point1[1]
+        self.ey = abs(A*self.x + B*self.y + C)/(math.sqrt(A**2 + B**2))
+        print("ey:", self.ey)
+
+    def calc_target(self, th):
+        # Calculate previos target and next target
+        target = self.traces[self.previous_target]
+        self.ld = math.sqrt((self.x-target[0])**2 + (self.y-target[1])**2)
+        if self.ld < th:
+            self.previous_target += 1
+            self.next_target += 1
+            if self.next_target == len(self.traces):
+                self.next_target = 0
+        print("next target value:", self.traces[self.next_target])
+
+    def update_point(self, img):
+
         # hsv select region of interest
-        mask = cv2.inRange(img,self.color_low,self.color_high)
-        
+        mask = cv2.inRange(img, self.color_low, self.color_high)
+
         # remove holes in the car surface
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))  # 矩形结构
         open_res = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-        
+
         # Find biggest contours
         _, contours, _ = cv2.findContours(open_res, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         area = []
-        print("Len of contours:",len(contours))
+        print("Len of contours:", len(contours))
         self.contours = len(contours)
         if len(contours) != 0:
             for i in range(len(contours)):
@@ -120,7 +116,7 @@ class car:
         min_box = cv2.minAreaRect(contours[max_idx])
         pts = np.int0(cv2.boxPoints(min_box))
         # cv2.drawContours(trans_frame, [pts], 0, (255, 0, 0), 3)
-    
+
         # find the first two points for the forward part
         if self.forward == "left":
             front = pts[0:2]
@@ -128,30 +124,59 @@ class car:
         else:
             front = pts[2:4]
             back = pts[0:2]
-        front_middle_point_float = [(front[0][0]+front[1][0])/2, (front[0][1]+front[1][1])/2]
-        back_middle_point_float = [(back[0][0]+back[1][0])/2, (back[0][1]+back[1][1])/2]
-        central_point_float = [(front_middle_point_float[0]+ back_middle_point_float[0])/2,\
-                               (front_middle_point_float[1]+ back_middle_point_float[1])/2]
-        self.front_middle_point = np.int0(front_middle_point_float)
-        self.back_middle_point = np.int0(back_middle_point_float)
-        self.central_point = np.int0(central_point_float)
+        front_middle_point_float = [(front[0][0]+front[1][0])/2, (front[0][1] + front[1][1])/2]
+        back_middle_point_float = [(back[0][0]+back[1][0])/2, (back[0][1] + back[1][1])/2]
+        central_point_float = ((front_middle_point_float[0] + back_middle_point_float[0])/2,
+                               (front_middle_point_float[1] + back_middle_point_float[1])/2)
+
+        self.central_point = iu.unitPixelToDis(central_point_float)
         self.x = self.central_point[0]
         self.y = self.central_point[1]
-        
-    def update_state(self):
-        if self.self.front_middle_point[0] < left_border:
-            self.state = "turn_left" 
-        elif self.self.front_middle_point[0] > right_border:
-            self.state = "turn_right"
-        else:
-            self.state = "straight"
-            
+
     def update(self, img):
         self.update_point(img)
         self.print_msg()
         self.calc_y_dis()
-        
+        self.calc_target(125)
+        self.purely_pursuit(self.next_target, 100)
 
-        
-        # TODO: Update the distance to the goal
-        
+    def inverse_kine_v(self, vm):
+        vp = (vm - 111.8)/878
+        return vp
+
+    def purely_pursuit(self, target_index, th):
+        # Calculate target velocity of each wheel
+        # target: next point need to pursuit, (x,y)
+        target = self.traces[target_index]
+        self.ld = math.sqrt((self.x-target[0])**2 + (self.y-target[1])**2)
+        turn = ""
+        if abs(self.ey) < th:
+            self.vl = self.inverse_kine_v(self.vc)
+            self.vr = self.inverse_kine_v(self.vc)
+            return
+        if self.forward == "go":
+            if self.y - target[1] > 0:
+                turn = "left"
+            elif self.y - target[1] < 0:
+                turn = "right"
+            else:
+                turn = "straight"
+        else:
+            if self.y - target[1] < 0:
+                turn = "left"
+            elif self.y - target[1] > 0:
+                turn = "right"
+            else:
+                turn = "straight"
+        delta = self.l * self.ey * self.vc / self.ld**2
+        print("Current turn:", turn)
+        print("Current ld:", self.ld)
+        if turn == "left":
+            self.vl = self.inverse_kine_v(self.vc - delta)
+            self.vr = self.inverse_kine_v(self.vc + delta)
+        elif turn == "right":
+            self.vl = self.inverse_kine_v(self.vc + delta)
+            self.vr = self.inverse_kine_v(self.vc - delta)
+        else:
+            self.vl = self.inverse_kine_v(self.vc)
+            self.vr = self.inverse_kine_v(self.vc)
