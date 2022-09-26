@@ -68,6 +68,7 @@ class mainServer():
     def receive_close(self):
         self.server.shutdown()
         self.server.server_close()
+        self.server_socket.close()
         sys.exit()
     
     def receive_begin(self):

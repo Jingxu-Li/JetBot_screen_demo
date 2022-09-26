@@ -53,6 +53,7 @@ class car:
     traces = []
     previous_target = 0
     next_target = 1
+    number = 0
 
     def __init__(self, ip, port, color_low, color_high, traces, vc=None):
         self.ip = ip
@@ -75,21 +76,29 @@ class car:
         if point1[0] == point2[0]:
             return self.x - point1[0]
         # y = (y2-y1)/(x2-x1)*(x-x1) + y1
-        A = (point2[1] - point1[1])/(point2[0] - point1[0])
-        B = -1
-        C = point1[0]**2*(point1[1]-point2[1])*(point2[0]-point1[0]) + point1[1]
-        self.ey = abs(A*self.x + B*self.y + C)/(math.sqrt(A**2 + B**2))
+        # A = (point2[1] - point1[1])/(point2[0] - point1[0])
+        # B = -1
+        # C = point1[0]**2*(point1[1]-point2[1])*(point2[0]-point1[0]) + point1[1]
+        # self.ey = abs(A*self.x + B*self.y + C)/(math.sqrt(A**2 + B**2))
+        self.ey = self.y - point2[1]
         print("ey:", self.ey)
 
     def calc_target(self, th):
-        # Calculate previos target and next target
+        # Calculate previous target and next target
         target = self.traces[self.previous_target]
         self.ld = math.sqrt((self.x-target[0])**2 + (self.y-target[1])**2)
-        if self.ld < th:
-            self.previous_target += 1
-            self.next_target += 1
-            if self.next_target == len(self.traces):
-                self.next_target = 0
+        # if self.ld < th:
+        #     self.previous_target += 1
+        #     self.next_target += 1
+        #     if self.next_target == len(self.traces):
+        #         self.next_target = 0
+        # while self.x > self.traces[self.previous_target][0]:
+        #     self.previous_target += 1
+        #     self.next_target += 1
+        for index, point in enumerate(self.traces):
+            if point[0] > self.x:
+                self.next_target = index
+                break
         print("next target value:", self.traces[self.next_target])
 
     def update_point(self, img):
@@ -115,8 +124,9 @@ class car:
         # Find a min box containing the max contour
         min_box = cv2.minAreaRect(contours[max_idx])
         pts = np.int0(cv2.boxPoints(min_box))
-        # cv2.drawContours(trans_frame, [pts], 0, (255, 0, 0), 3)
-
+        cv2.drawContours(open_res, [pts], 0, (255, 0, 0), 3)
+        cv2.imwrite("pics/{}_{}_{}.jpg".format(self.number, self.x, self.y), open_res)
+        self.number += 1
         # find the first two points for the forward part
         if self.forward == "left":
             front = pts[0:2]
@@ -137,7 +147,7 @@ class car:
         self.update_point(img)
         self.print_msg()
         self.calc_y_dis()
-        self.calc_target(125)
+        self.calc_target(50)
         self.purely_pursuit(self.next_target, 100)
 
     def inverse_kine_v(self, vm):
@@ -168,7 +178,7 @@ class car:
                 turn = "right"
             else:
                 turn = "straight"
-        delta = self.l * self.ey * self.vc / self.ld**2
+        delta = self.l * abs(self.ey) * self.vc / self.ld**2
         print("Current turn:", turn)
         print("Current ld:", self.ld)
         if turn == "left":
@@ -179,4 +189,12 @@ class car:
             self.vr = self.inverse_kine_v(self.vc - delta)
         else:
             self.vl = self.inverse_kine_v(self.vc)
+            self.vr = self.inverse_kine_v(self.vc)
+        if self.vl < 0:
+            self.vl = 0.01
+        if self.vr < 0:
+            self.vr = 0.01
+        if self.vl > self.inverse_kine_v(self.vc):
+            self.vl = self.inverse_kine_v(self.vc)
+        if self.vr > self.inverse_kine_v(self.vc):
             self.vr = self.inverse_kine_v(self.vc)
