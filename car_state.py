@@ -29,7 +29,10 @@ class car:
 
     l = 120
     r = 30
-
+    
+    # control period
+    delta_t = 0.1
+    
     # motion properties
     x = 0                       # central points (x,y)
     y = 0
@@ -100,6 +103,13 @@ class car:
                 self.next_target = index
                 break
         print("next target value:", self.traces[self.next_target])
+
+    def update_point_simulate(self):
+        self.v = (self.vl + self.vr) / 2
+        self.delta_yaw = abs(self.vl - self.vr) / self.l
+        self.x = self.x + self.v * math.cos(self.yaw) * self.delta_t
+        self.y = self.y + self.v * math.sin(self.yaw) * self.delta_t
+        self.yaw = self.yaw + self.delta_yaw * self.delta_t
 
     def update_point(self, img):
 
